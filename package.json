@@ -92,7 +92,13 @@
     "defaultEnabled": true,
     "defaultOptions": {},
     "optionSchema": {
+      "themes": {
+        "type": "array"
+      },
       "theme": {
+        "type": "string"
+      },
+      "ends": {
         "type": "string"
       },
       "variants": {
@@ -104,10 +110,22 @@
       "rowHeight": {
         "type": "string"
       },
-      "slice": {
-        "type": "number"
+      "edgeLeft": {
+        "type": "string"
       },
-      "edge": {
+      "edgeRight": {
+        "type": "string"
+      },
+      "overlap": {
+        "type": "string"
+      },
+      "gutter": {
+        "type": "string"
+      },
+      "mobileGutter": {
+        "type": "string"
+      },
+      "padding": {
         "type": "string"
       }
     },

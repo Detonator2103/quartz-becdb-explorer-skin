@@ -46,32 +46,91 @@ async function setup(extraList = LIST) {
 
 const skin = (el: Element | null) => (el as HTMLElement | null)?.dataset.skin;
 
+const css = (opts = {}) => ExplorerSkin(opts).css as string;
+const block = (source: string, theme: string) =>
+  source.match(
+    new RegExp(
+      `:root\\[saved-theme="${theme}"\\] \\.explorer-content ul li > a,\\n:root\\[saved-theme="${theme}"\\] \\.explorer-content \\.folder-container \\{\\n  background-image: [^}]*\\}`,
+    ),
+  )?.[0] ?? "";
+
 describe("generated CSS", () => {
-  it("builds a 3-slice rule per row and one rule per variant", () => {
-    const css = ExplorerSkin().css as string;
-    expect(css).toContain(':root[saved-theme="buttons"]');
-    expect(css).toContain("border-image-slice: 0 var(--skin-slice) 0 var(--skin-slice) fill");
-    expect(css).toContain('[data-skin="wip"]');
-    expect(css).toContain('[data-skin="important"]');
-    expect(css).toContain('url("static/explorer-skin/wip.png")');
-    expect(css).toContain(".folder-container");
+  it("paints three parts: both ends plus a stretched middle that reaches under the ends", () => {
+    const out = css();
+    expect(out).toContain(':root[saved-theme="buttons"]');
+    expect(block(out, "buttons")).toContain(
+      "background-image: var(--skin-l), var(--skin-r), var(--skin-m)",
+    );
+    expect(block(out, "buttons")).toContain("+ 2 * var(--skin-overlap)");
+    expect(out).toContain('url("static/explorer-skin/file-left.png")');
+    expect(out).toContain('url("static/explorer-skin/wip-middle.png")');
+    expect(out).toContain('url("static/explorer-skin/important-right.png")');
+    expect(out).toContain('[data-skin="wip"]');
   });
 
-  it("follows the options", () => {
-    const css = ExplorerSkin({
-      theme: "neon",
-      variants: ["draft"],
-      imageDir: "static/skin",
+  it("draws only the ends that `ends` asks for; the middle always stays", () => {
+    const edges = (ends: string) =>
+      css({ themes: [{ id: "t", ends }] })
+        .match(/--skin-edge-l: (\S+);\n {2}--skin-edge-r: (\S+);/)
+        ?.slice(1, 3);
+
+    const left = css({ themes: [{ id: "t", ends: "left" }] });
+    expect(block(left, "t")).toContain("background-image: var(--skin-l), var(--skin-m)");
+    expect(edges("left")).toEqual(["20px", "0px"]);
+
+    const right = css({ themes: [{ id: "t", ends: "right" }] });
+    expect(block(right, "t")).toContain("background-image: var(--skin-r), var(--skin-m)");
+    expect(edges("right")).toEqual(["0px", "20px"]);
+
+    const none = css({ themes: [{ id: "t", ends: "none" }] });
+    expect(block(none, "t")).toContain("background-image: var(--skin-m);");
+    expect(edges("none")).toEqual(["0px", "0px"]);
+
+    expect(edges("both")).toEqual(["20px", "20px"]);
+  });
+
+  it("gives every theme its own ends", () => {
+    const out = css({
+      themes: [
+        { id: "a", ends: "left" },
+        { id: "b", ends: "none" },
+      ],
+    });
+    expect(block(out, "a")).toContain("var(--skin-l), var(--skin-m)");
+    expect(block(out, "b")).toContain("background-image: var(--skin-m);");
+    expect(out).toContain(':root[saved-theme="a"] .explorer-content [data-skin="wip"]');
+    expect(out).toContain(':root[saved-theme="b"] .explorer-content [data-skin="wip"]');
+  });
+
+  it("still accepts the single `theme` shorthand", () => {
+    const out = css({ theme: "neon", ends: "right" });
+    expect(block(out, "neon")).toContain("var(--skin-r), var(--skin-m)");
+    expect(out).not.toContain('saved-theme="buttons"');
+  });
+
+  it("follows the size options", () => {
+    const out = css({
       rowHeight: "32px",
-      slice: 30,
-      edge: "15px",
-    }).css as string;
-    expect(css).toContain(':root[saved-theme="neon"]');
-    expect(css).toContain('[data-skin="draft"]');
-    expect(css).toContain("--skin-height: 32px");
-    expect(css).toContain("--skin-slice: 30");
-    expect(css).toContain("--skin-edge: 15px");
-    expect(css).not.toContain('"wip"');
+      edgeLeft: "12px",
+      edgeRight: "16px",
+      overlap: "2px",
+      variants: ["draft"],
+    });
+    expect(out).toContain("--skin-height: 32px");
+    expect(out).toContain("--skin-edge-l: 12px");
+    expect(out).toContain("--skin-edge-r: 16px");
+    expect(out).toContain("--skin-overlap: 2px");
+    expect(out).toContain('[data-skin="draft"]');
+    expect(out).not.toContain('"wip"');
+  });
+
+  it("keeps rows off the window edge on phones and hides them while the explorer is closed", () => {
+    const out = css({ mobileGutter: "18px" });
+    const phone = out.slice(out.indexOf("@media all and (max-width: 800px)"));
+    expect(phone).toContain("--skin-gutter: 18px");
+    expect(phone).toContain(".explorer.collapsed .explorer-content ul li > a");
+    expect(phone).toContain(".explorer.collapsed .explorer-content .folder-container");
+    expect(phone).toContain("visibility: hidden");
   });
 });
 

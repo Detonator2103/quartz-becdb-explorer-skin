@@ -6,114 +6,208 @@ import type {
 // @ts-expect-error - inline script imported as string by the Quartz bundler
 import script from "./scripts/explorer-skin.inline.ts";
 
-export interface ExplorerSkinOptions {
+export type SkinEnds = "none" | "left" | "right" | "both";
+
+export interface SkinTheme {
   /** Theme id (value of `saved-theme` on <html>) in which the skin is active */
-  theme: string;
+  id: string;
+  /** Which ends of the background are drawn: none, left, right or both. The middle part always is. */
+  ends: SkinEnds;
+}
+
+export interface ExplorerSkinOptions {
+  /** Themes with the skin, each with its own `ends` */
+  themes: SkinTheme[];
+  /** Shorthand for a single theme (ignored when `themes` is given) */
+  theme?: string;
+  /** `ends` of the single theme given as `theme` */
+  ends?: SkinEnds;
   /** Tags that switch the background of a note or folder (folder = tags of its index.md) */
   variants: string[];
   /** Folder with the images, relative to the site root (i.e. inside quartz/static/) */
   imageDir: string;
-  /** Height of a row (the height of the images) */
+  /** Height of a row = how tall the images are drawn */
   rowHeight: string;
-  /** Width of each fixed end in the image, in image pixels */
-  slice: number;
-  /** Width of each fixed end on screen (a CSS length; smaller than `slice` for 2x images) */
-  edge: string;
+  /** Width the left end image is drawn at */
+  edgeLeft: string;
+  /** Width the right end image is drawn at */
+  edgeRight: string;
+  /** The middle part reaches this far under each end, so no thin gap shows between the parts */
+  overlap: string;
+  /** Free space left and right of every row */
+  gutter: string;
+  /** The same on phones (keeps the ends away from the edge of the explorer window) */
+  mobileGutter: string;
+  /** Space between the text and the drawn ends */
+  padding: string;
 }
 
 const DEFAULTS: ExplorerSkinOptions = {
-  theme: "buttons",
+  themes: [{ id: "buttons", ends: "both" }],
   variants: ["wip", "new", "important"],
   imageDir: "static/explorer-skin",
   rowHeight: "40px",
-  slice: 20,
-  edge: "20px",
+  edgeLeft: "20px",
+  edgeRight: "20px",
+  overlap: "1px",
+  gutter: "4px",
+  mobileGutter: "14px",
+  padding: "6px",
 };
 
 const q = (value: string) => JSON.stringify(value);
+const safe = (name: string) => name.replace(/[^a-zA-Z0-9_-]/g, "_");
 
-// The stylesheet is generated from the options so the theme id and the variants are configurable.
-// 3-slice: `border-image` keeps both ends of the image at a fixed size and stretches only the
-// middle (`fill` paints the middle part), so the picture is never skewed at any width.
-export function buildCss(o: ExplorerSkinOptions): string {
-  const root = `:root[saved-theme=${q(o.theme)}]`;
-  const rows = `${root} .explorer-content ul li > a,\n${root} .explorer-content .folder-container`;
-  const variantVars = o.variants
-    .map((v) => `  --skin-${cssId(v)}: url(${q(`${o.imageDir}/${fileId(v)}.png`)});`)
-    .join("\n");
-  const variantRules = o.variants
-    .map(
-      (v) =>
-        `${root} .explorer-content [data-skin=${q(v)}] {\n  --skin-img: var(--skin-${cssId(v)});\n}`,
+function resolveThemes(o: Partial<ExplorerSkinOptions>): SkinTheme[] {
+  if (o.themes && o.themes.length > 0) return o.themes;
+  if (o.theme) return [{ id: o.theme, ends: o.ends ?? "both" }];
+  return DEFAULTS.themes;
+}
+
+// Every row is painted with up to three background layers: the left end, the right end and the
+// middle part. The ends keep their size (`edgeLeft` / `edgeRight`); only the middle is stretched, so
+// the picture is never skewed at any window width. `ends` decides which end layers exist.
+function layersFor(ends: SkinEnds) {
+  const hasLeft = ends === "left" || ends === "both";
+  const hasRight = ends === "right" || ends === "both";
+  const images: string[] = [];
+  const positions: string[] = [];
+  const sizes: string[] = [];
+  if (hasLeft) {
+    images.push("var(--skin-l)");
+    positions.push("left center");
+    sizes.push("var(--skin-edge-l) 100%");
+  }
+  if (hasRight) {
+    images.push("var(--skin-r)");
+    positions.push("right center");
+    sizes.push("var(--skin-edge-r) 100%");
+  }
+  images.push("var(--skin-m)");
+  positions.push("calc(var(--skin-edge-l) - var(--skin-overlap)) center");
+  sizes.push("calc(100% - var(--skin-edge-l) - var(--skin-edge-r) + 2 * var(--skin-overlap)) 100%");
+  return { hasLeft, hasRight, images, positions, sizes };
+}
+
+export function buildCss(opts: Partial<ExplorerSkinOptions> = {}): string {
+  const o = { ...DEFAULTS, ...opts };
+  const themes = resolveThemes(opts);
+  const names = ["file", "folder", ...o.variants];
+
+  const roots = themes.map((t) => `:root[saved-theme=${q(t.id)}]`);
+
+  // selector list: every suffix under every theme
+  const sel = (...suffixes: string[]) =>
+    themes
+      .flatMap((t) => suffixes.map((x) => `:root[saved-theme=${q(t.id)}] ${x}`.trim()))
+      .join(",\n");
+
+  const files = ".explorer-content ul li > a";
+  const folders = ".explorer-content .folder-container";
+
+  const imageVars = names
+    .map((n) =>
+      ["left", "middle", "right"]
+        .map(
+          (part) =>
+            `  --skin-${safe(n)}-${part[0]}: url(${q(`${o.imageDir}/${safe(n)}-${part}.png`)});`,
+        )
+        .join("\n"),
     )
     .join("\n");
 
-  return `${root} {
-  --skin-height: ${o.rowHeight};
-  --skin-slice: ${o.slice};
-  --skin-edge: ${o.edge};
-  --skin-file: url(${q(`${o.imageDir}/file.png`)});
-  --skin-folder: url(${q(`${o.imageDir}/folder.png`)});
-${variantVars}
+  const pick = (n: string) =>
+    `  --skin-l: var(--skin-${safe(n)}-l);\n  --skin-m: var(--skin-${safe(n)}-m);\n  --skin-r: var(--skin-${safe(n)}-r);`;
+
+  const variantRules = o.variants
+    .map((v) => `${sel(`.explorer-content [data-skin=${q(v)}]`)} {\n${pick(v)}\n}`)
+    .join("\n\n");
+
+  const perTheme = themes
+    .map((t) => {
+      const L = layersFor(t.ends);
+      const root = `:root[saved-theme=${q(t.id)}]`;
+      return `${root} {
+  --skin-edge-l: ${L.hasLeft ? o.edgeLeft : "0px"};
+  --skin-edge-r: ${L.hasRight ? o.edgeRight : "0px"};
 }
 
-${rows} {
+${root} ${files},
+${root} ${folders} {
+  background-image: ${L.images.join(", ")};
+  background-position: ${L.positions.join(", ")};
+  background-size: ${L.sizes.join(", ")};
+}`;
+    })
+    .join("\n\n");
+
+  return `${roots.join(",\n")} {
+  --skin-height: ${o.rowHeight};
+  --skin-overlap: ${o.overlap};
+  --skin-gutter: ${o.gutter};
+  --skin-pad: ${o.padding};
+${imageVars}
+}
+
+${perTheme}
+
+${sel(files, folders)} {
   box-sizing: border-box;
   min-height: var(--skin-height);
-  margin: 2px 0;
-  padding: 4px 6px;
+  margin: 2px var(--skin-gutter);
+  padding: 4px calc(var(--skin-edge-r) + var(--skin-pad)) 4px calc(var(--skin-edge-l) + var(--skin-pad));
   display: flex;
   align-items: center;
-  border-style: solid;
-  border-color: transparent;
-  border-width: 0 var(--skin-edge);
-  border-image-source: var(--skin-img);
-  border-image-slice: 0 var(--skin-slice) 0 var(--skin-slice) fill;
-  border-image-width: 0 var(--skin-edge) 0 var(--skin-edge);
-  border-image-repeat: stretch;
+  background-repeat: no-repeat;
   opacity: 1;
   cursor: pointer;
   transition: filter 0.15s ease;
 }
 
-${root} .explorer-content ul li > a {
-  --skin-img: var(--skin-file);
+${sel(files)} {
+${pick("file")}
 }
 
-${root} .explorer-content .folder-container {
-  --skin-img: var(--skin-folder);
+${sel(folders)} {
+${pick("folder")}
 }
 
 ${variantRules}
 
-${root} .explorer-content ul li > a:hover,
-${root} .explorer-content .folder-container:hover {
+${sel(`${files}:hover`, `${folders}:hover`)} {
   filter: brightness(1.12);
 }
 
-${root} .explorer-content ul li > a.active {
+${sel(`${files}.active`)} {
   filter: brightness(1.25);
 }
 
 /* the whole row reacts to a click, not only the title */
-${root} .explorer-content .folder-container > div {
+${sel(`${folders} > div`)} {
   flex: 1 1 auto;
   min-width: 0;
 }
 
-${root} .explorer-content .folder-container div > button,
-${root} .explorer-content .folder-container div > a {
+${sel(`${folders} div > button`, `${folders} div > a`)} {
   width: 100%;
 }
+
+@media all and (max-width: 800px) {
+  ${roots.join(",\n  ")} {
+    --skin-gutter: ${o.mobileGutter};
+  }
+
+  /* the explorer window is closed: nothing of the rows may peek out (the explorer keeps open folders visible) */
+  ${sel(`.explorer.collapsed ${files}`, `.explorer.collapsed ${folders}`)
+    .split(",\n")
+    .join(",\n  ")} {
+    visibility: hidden;
+    transition:
+      filter 0.15s ease,
+      visibility 0s linear 250ms;
+  }
+}
 `;
-}
-
-function cssId(name: string): string {
-  return name.replace(/[^a-zA-Z0-9_-]/g, "_");
-}
-
-function fileId(name: string): string {
-  return name.replace(/[^a-zA-Z0-9_-]/g, "_");
 }
 
 export default ((opts?: Partial<ExplorerSkinOptions>) => {
@@ -124,7 +218,7 @@ export default ((opts?: Partial<ExplorerSkinOptions>) => {
     return <div class="explorer-skin" hidden data-variants={JSON.stringify(o.variants)}></div>;
   };
 
-  ExplorerSkin.css = buildCss(o);
+  ExplorerSkin.css = buildCss(opts ?? {});
   ExplorerSkin.afterDOMLoaded = script;
   return ExplorerSkin;
 }) satisfies QuartzComponentConstructor<Partial<ExplorerSkinOptions>>;
